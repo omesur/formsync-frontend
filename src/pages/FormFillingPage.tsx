@@ -121,8 +121,8 @@ const FormFillingPage: React.FC = () => {
                         calculatedInitialValues[field.name] = null; // Para AntD Form, no intentará controlar
                     } else {
                         calculatedInitialValues[field.name] = instanceStoredData.hasOwnProperty(field.name)
-                            ? instanceStoredData[field.name]
-                            : (field.defaultValue ?? (field.type === 'checkbox' ? false : null));
+                            ? (field.defaultValue ?? (field.type === 'checkbox' ? false : null))
+                            : null;
                     }
                 });
 
@@ -282,12 +282,26 @@ const FormFillingPage: React.FC = () => {
         }
     };
 
+    const logFormValues = (label: string, values: Record<string, any>) => {
+    console.log(`DEBUG [${label}]:`, JSON.stringify(values, (key, val) => {
+        if (val && typeof val === 'object' && typeof val.format === 'function') {
+            return `[Date Object: ${val.format('YYYY-MM-DD')}]`;
+        }
+        return val;
+    }, 2));
+};
+
     // Envío del formulario
-    const handleFinish = async (formValues: Record<string, any>, submitStatus: FormStatus = FormStatus.Submitted) => {
-        // Verificar archivos en proceso de carga
-                
-        // Validación explícita de campos de archivo
-        if (!validateFileFields()) {
+    const handleFinish = async (formValues: Record<string, any>, submitStatus: FormStatus = FormStatus.Submitted) => 
+    {
+        // Si estamos guardando como borrador, podemos omitir algunas validaciones
+        const isDraft = submitStatus === FormStatus.Draft;
+        
+        // Log inicial para depuración
+        logFormValues('Form values at submit', formValues);
+        
+        // Para envíos finales, validamos archivos. Para borradores, no es obligatorio
+        if (!isDraft && !validateFileFields()) {
             toast.error("Por favor complete todos los campos de archivo obligatorios.");
             return;
         }
@@ -296,6 +310,51 @@ const FormFillingPage: React.FC = () => {
         
         // Preparar datos para enviar
         const dataToSend: Record<string, any> = {};
+        
+        // Función mejorada para procesar campos de fecha
+        const processDateField = (value: any): string | null => {
+    console.log('DEBUG: Processing date value:', {
+        value,
+        type: typeof value,
+        constructor: value && value.constructor ? value.constructor.name : 'undefined',
+        hasFormat: value && typeof value.format === 'function',
+        hasToDate: value && typeof value.toDate === 'function',
+        valueProps: value && typeof value === 'object' ? Object.keys(value) : []
+    });
+    
+    // Si es null o undefined
+    if (value == null) return null;
+    
+    // Si es un objeto Day.js (usado en AntD 5)
+    if (typeof value === 'object' && value !== null && typeof value.format === 'function') {
+        return value.format('YYYY-MM-DD');
+    }
+    
+    // Si es un string con formato de fecha ISO
+    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) {
+        return value.split('T')[0]; // Asegurarse de tomar solo la parte de fecha
+    }
+    
+    // Si es un objeto Date de JavaScript
+    if (value instanceof Date) {
+        return value.toISOString().split('T')[0];
+    }
+    
+    // Intentar convertir cualquier otro formato
+    try {
+        const date = new Date(value);
+        if (!isNaN(date.getTime())) {
+            return date.toISOString().split('T')[0];
+        }
+    } catch (e) {
+        console.warn(`Failed to convert date value:`, value, e);
+    }
+    
+    console.warn(`Could not process date value, returning null`);
+    return null;
+    
+};
+logFormValues('Processed form values', dataToSend);
         
         template?.structureDefinition.forEach((field: FormFieldDefinition) => {
             if (field.type === 'file') {
@@ -311,34 +370,46 @@ const FormFillingPage: React.FC = () => {
                 } else {
                     dataToSend[field.name] = null;
                 }
-            } else if (field.type === 'date' && formValues[field.name] && 
-                       typeof formValues[field.name].toISOString === 'function') {
-                dataToSend[field.name] = formValues[field.name].toISOString();
+            } else if (field.type === 'date') {
+                // PARTE CRÍTICA: Procesamiento de campos de fecha
+                const rawValue = formValues[field.name];
+                const processedDate = processDateField(rawValue);
+                
+                // Log adicional para depuración de fechas
+                console.log(`DEBUG: Date field ${field.name}:`, {
+                    rawValue,
+                    rawType: typeof rawValue,
+                    processedDate,
+                    isValid: !!processedDate
+                });
+                
+                dataToSend[field.name] = processedDate;
+                
             } else {
                 dataToSend[field.name] = formValues[field.name];
             }
-
         });
         
         try {
+            // Log final para verificar datos antes de enviar
+            
+            logFormValues('Final data being sent', dataToSend);
+
             if (isEditMode && instanceIdParam) {
-                console.log('DEBUG: Data being sent to backend (dataToSend):', JSON.stringify(dataToSend, null, 2));
-                console.log('DEBUG: Values from AntD Form (formValuesFromAntD):', JSON.stringify(formValues, null, 2));
                 await apiClient.patch(`/form-instances/${instanceIdParam}`, {
                     data: dataToSend,
                     status: submitStatus
                 });
-                toast.success('¡Formulario actualizado exitosamente!');
+                toast.success(isDraft ? '¡Borrador guardado exitosamente!' : '¡Formulario actualizado exitosamente!');
             } else if (templateIdParam) {
-                console.log('DEBUG: Data being sent to backend (dataToSend):', JSON.stringify(dataToSend, null, 2));
-                console.log('DEBUG: Values from AntD Form (formValuesFromAntD):', JSON.stringify(formValues, null, 2));
                 await apiClient.post('/form-instances', {
                     templateId: Number(templateIdParam),
                     data: dataToSend,
                     status: submitStatus
                 });
-                toast.success('¡Formulario enviado exitosamente!');
+                toast.success(isDraft ? '¡Borrador guardado exitosamente!' : '¡Formulario enviado exitosamente!');
             }
+            
             navigate('/my-instances');
         } catch (error: any) {
             console.error("Error submitting form:", error);
@@ -349,10 +420,20 @@ const FormFillingPage: React.FC = () => {
     };
 
     // Guardar como borrador
-    const handleSaveAsDraft = async () => {
+   const handleSaveAsDraft = async () => {
         try {
+            // Obtener los valores actuales del formulario
             const currentValues = form.getFieldsValue(true);
-            handleFinish(currentValues, FormStatus.Draft);
+            
+            // Imprimir para depuración
+            console.log('DEBUG (handleSaveAsDraft): Current form values before saving as draft:', 
+                        JSON.stringify(currentValues, null, 2));
+            
+            // Validar el formulario - importante: para borradores NO aplicamos validación completa
+            // Solo queremos asegurarnos de que podemos obtener los valores
+            
+            // Llamar a handleFinish con los valores actuales y el estado Draft
+            await handleFinish(currentValues, FormStatus.Draft);
         } catch (error) {
             console.error("Error getting form values for draft:", error);
             toast.error("Error al preparar el borrador");
@@ -503,17 +584,14 @@ const FormFillingPage: React.FC = () => {
                         return (
                             <Col xs={24} sm={12} md={8} key={field.id || field.name}>
                                 <Form.Item
-                                    key={field.id || field.name}
-                                    label={field.label}
-                                    name={field.name}
-                                    rules={rules}
-                                    valuePropName={field.type === 'checkbox' ? 'checked' : 'value'}
-                                    required={field.required}
-                                    
+                                key={field.id || field.name}
+                                label={field.label}
+                                name={field.name}
+                                rules={rules}
+                                valuePropName={field.type === 'checkbox' ? 'checked' : 'value'}
+                                required={field.required}
                                 >
-                                    <div style={{ maxWidth: '400px' }}>
-                                        <DynamicFormField field={field} />
-                                    </div>
+                                <DynamicFormField field={field} />
                                 </Form.Item>
                             </Col>
                         );
