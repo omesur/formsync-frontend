@@ -1,5 +1,5 @@
 // src/pages/RegisterPage.tsx
-import React, { useState, FormEvent } from 'react';
+import React, { useState} from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 
@@ -20,8 +20,7 @@ const RegisterPage: React.FC = () => {
   const navigate = useNavigate();
 
   // Dentro de handleSubmit en RegisterPage.tsx:
-    const handleSubmit = async (event: FormEvent) => {
-        event.preventDefault();
+    const handleSubmit = async () => {
         // setError(null); // Ya no existe setError
         setIsLoading(true);
 
