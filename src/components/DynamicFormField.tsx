@@ -1,9 +1,7 @@
 import React, { ChangeEvent } from 'react';
 import { Input, InputNumber, Select, Checkbox, Radio, DatePicker, Space } from 'antd';
 import { FormFieldDefinition, FormFieldOption } from '../common/interfaces/form-field.interfaces';
-import type { DatePickerProps } from 'antd'; // Para el tipo de onChange del DatePicker
 import type { CheckboxChangeEvent } from 'antd/es/checkbox';
-import type { RadioChangeEvent } from 'antd/es/radio';
 
 const { Option } = Select;
 
